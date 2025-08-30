@@ -115,6 +115,15 @@ function buildFriendsJsonResponse(
 	return new Response(JSON.stringify(body, null, 2), { status: 200, headers });
 }
 
+function buildFriendsArrayJsonResponse(entries: { title: string; auther: string; date: string; link: string; content: string }[], wrapKey?: string): Response {
+	const headers = new Headers();
+	headers.set("content-type", "application/json; charset=utf-8");
+	headers.set("cache-control", "public, max-age=300");
+	headers.set("access-control-allow-origin", "*");
+	const body = wrapKey ? { [wrapKey]: entries } : entries;
+	return new Response(JSON.stringify(body, null, 2), { status: 200, headers });
+}
+
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
@@ -245,6 +254,58 @@ export default {
 			}
 
 			return notFound();
+		}
+
+		// Aggregate multiple saved rules into Friends array
+		if (request.method === "GET" && pathname === "/friends") {
+			const idsParam = url.searchParams.get("ids")?.trim();
+			if (!idsParam) return badRequest("Missing ?ids=rule1,rule2");
+			const ids = idsParam.split(",").map((s) => s.trim()).filter(Boolean);
+			const per = Math.max(1, Math.min(Number(url.searchParams.get("per") || "20"), 100));
+			const totalLimit = Math.max(1, Math.min(Number(url.searchParams.get("limit") || String(ids.length * per)), 500));
+			const dateAsYMD = (url.searchParams.get("date_fmt") || "").toLowerCase() === "ymd";
+			const wrapKey = url.searchParams.get("root") || url.searchParams.get("wrap") || undefined;
+			const sort = (url.searchParams.get("sort") || "").toLowerCase(); // "desc" to sort by date desc
+
+			const cache = caches.default;
+			const cacheKey = buildCacheKey(request);
+			const cached = await cache.match(cacheKey);
+			if (cached) return cached;
+
+			try {
+				const allEntries: { title: string; auther: string; date: string; link: string; content: string; _ts?: number }[] = [];
+				for (const id of ids) {
+					const stored = await env.FEED_RULES.get(id, { type: "json" });
+					if (!stored) continue;
+					const rule = stored as FeedRule;
+					const htmlText = await fetchPage(rule.sourceUrl, rule.userAgent);
+					const { items, pageTitle } = extractFromHtml(htmlText, rule.sourceUrl, rule);
+					const auther = rule.site?.title || pageTitle || new URL(rule.sourceUrl).host;
+					const limited = items.slice(0, per);
+					for (const it of limited) {
+						const dateStr = dateAsYMD ? (formatDateYYYYMMDD(it.date) || "") : (it.date || "");
+						const ts = it.date ? Date.parse(it.date) : NaN;
+						allEntries.push({
+							title: it.title || "",
+							auther,
+							date: dateStr,
+							link: it.link || "",
+							content: it.content || "",
+							_ts: Number.isNaN(ts) ? undefined : ts,
+						});
+					}
+				}
+				let output = allEntries;
+				if (sort === "desc") {
+					output = output.sort((a, b) => (b._ts || 0) - (a._ts || 0));
+				}
+				output = output.slice(0, totalLimit).map(({ _ts, ...rest }) => rest);
+				const response = buildFriendsArrayJsonResponse(output, wrapKey);
+				ctx.waitUntil(cache.put(cacheKey, response.clone()));
+				return response;
+			} catch (err) {
+				return json({ error: (err as Error).message }, { status: 502 });
+			}
 		}
 
 		return notFound();
