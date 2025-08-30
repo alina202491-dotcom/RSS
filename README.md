@@ -6,6 +6,8 @@
 - 简单的 Admin API（Bearer Token）
 - Cloudflare 缓存（默认 5 分钟）
 
+> 新手请先阅读：《部署超详细教程》见 `DEPLOY_GUIDE_ZH.md`
+
 ## 快速开始
 
 1) 安装依赖
