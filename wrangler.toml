@@ -7,7 +7,3 @@ node_compat = false
 [vars]
 ADMIN_TOKEN = "changeme"
 
-[[kv_namespaces]]
-binding = "FEED_RULES"
-id = "your_prod_kv_id"
-preview_id = "local_dev_kv_id"
